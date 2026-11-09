@@ -1,6 +1,7 @@
 #![allow(unused_imports)]
 use std::net::TcpListener;
 use std::io::{Read, Write};
+use std::Thread;
 
 
 fn main() {
@@ -20,6 +21,12 @@ fn main() {
                     }
                     stream.write_all(b"+PONG\r\n").unwrap();
                 }
+            Ok(stream) => {
+                thread::spawn(move || {
+                    handle_client(stream);
+                    });
+            }
+
             }
             Err(e) => {
                 println!("error: {}", e);
