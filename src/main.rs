@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use std::net::TcpListener;
 use std::io::{Read, Write};
-use std::Thread;
+use std::thread;
 
 
 fn main() {
@@ -13,6 +13,9 @@ fn main() {
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
+                thread::spawn(move || {
+                    handle_client(&mut stream);
+                });
                 let mut buf = [0; 512];
                 loop {
                     let bytes_read = stream.read(&mut buf).unwrap();
@@ -21,12 +24,6 @@ fn main() {
                     }
                     stream.write_all(b"+PONG\r\n").unwrap();
                 }
-            Ok(stream) => {
-                thread::spawn(move || {
-                    handle_client(stream);
-                    });
-            }
-
             }
             Err(e) => {
                 println!("error: {}", e);
