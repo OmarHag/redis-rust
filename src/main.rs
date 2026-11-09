@@ -14,7 +14,6 @@ fn main() {
         match stream {
             Ok(mut stream) => {
                 thread::spawn(move || {
-                    handle_client(&mut stream);
                 let mut buf = [0; 512];
                 loop {
                     let bytes_read = stream.read(&mut buf).unwrap();
