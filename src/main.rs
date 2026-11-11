@@ -11,15 +11,21 @@ fn main() {
 
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
 
-    // Store each value with an optional expiration time
+    // Shared storage for strings and their expiration times
     let database = Arc::new(Mutex::new(
         HashMap::<String, (String, Option<Instant>)>::new()
+    ));
+
+    // Shared storage for lists
+    let lists = Arc::new(Mutex::new(
+        HashMap::<String, Vec<String>>::new()
     ));
 
     for stream in listener.incoming() {
         match stream {
             Ok(mut stream) => {
                 let database = Arc::clone(&database);
+                let lists = Arc::clone(&lists);
 
                 thread::spawn(move || {
                     let mut buf = [0; 512];
@@ -46,7 +52,6 @@ fn main() {
                             let key = parts[4].to_string();
                             let value = parts[6].to_string();
 
-                            // Check whether PX expiration was provided
                             let expiry = if parts.len() >= 11
                                 && parts[8].eq_ignore_ascii_case("PX")
                             {
@@ -81,6 +86,22 @@ fn main() {
                                     stream.write_all(b"$-1\r\n").unwrap();
                                 }
                             }
+
+                        } else if parts.len() >= 5 && parts[2].eq_ignore_ascii_case("RPUSH") {
+                            let key = parts[4].to_string();
+
+                            let mut db = lists.lock().unwrap();
+                            let list = db.entry(key).or_insert_with(Vec::new);
+
+                            // Add each provided element to the list
+                            for i in (6..parts.len()).step_by(2) {
+                                if !parts[i].is_empty() {
+                                    list.push(parts[i].to_string());
+                                }
+                            }
+
+                            let response = format!(":{}\r\n", list.len());
+                            stream.write_all(response.as_bytes()).unwrap();
                         }
                     }
                 });
