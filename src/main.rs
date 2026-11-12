@@ -11,12 +11,12 @@ fn main() {
 
     let listener = TcpListener::bind("127.0.0.1:6379").unwrap();
 
-    // Shared storage for strings and their expiration times
+    // Shared storage for strings and optional expiration times
     let database = Arc::new(Mutex::new(
         HashMap::<String, (String, Option<Instant>)>::new()
     ));
 
-    // Shared storage for lists
+    // Shared storage for Redis lists
     let lists = Arc::new(Mutex::new(
         HashMap::<String, Vec<String>>::new()
     ));
@@ -40,14 +40,17 @@ fn main() {
                         let message = String::from_utf8_lossy(&buf[..bytes_read]);
                         let parts: Vec<&str> = message.split("\r\n").collect();
 
+                        // PING
                         if parts.len() >= 4 && parts[2].eq_ignore_ascii_case("PING") {
                             stream.write_all(b"+PONG\r\n").unwrap();
 
+                        // ECHO
                         } else if parts.len() >= 5 && parts[2].eq_ignore_ascii_case("ECHO") {
                             let argument = parts[4];
                             let response = format!("${}\r\n{}\r\n", argument.len(), argument);
                             stream.write_all(response.as_bytes()).unwrap();
 
+                        // SET
                         } else if parts.len() >= 7 && parts[2].eq_ignore_ascii_case("SET") {
                             let key = parts[4].to_string();
                             let value = parts[6].to_string();
@@ -62,9 +65,9 @@ fn main() {
                             };
 
                             database.lock().unwrap().insert(key, (value, expiry));
-
                             stream.write_all(b"+OK\r\n").unwrap();
 
+                        // GET
                         } else if parts.len() >= 5 && parts[2].eq_ignore_ascii_case("GET") {
                             let key = parts[4];
                             let mut db = database.lock().unwrap();
@@ -87,13 +90,13 @@ fn main() {
                                 }
                             }
 
+                        // RPUSH
                         } else if parts.len() >= 5 && parts[2].eq_ignore_ascii_case("RPUSH") {
                             let key = parts[4].to_string();
 
                             let mut db = lists.lock().unwrap();
                             let list = db.entry(key).or_insert_with(Vec::new);
 
-                            // Add each provided element to the list
                             for i in (6..parts.len()).step_by(2) {
                                 if !parts[i].is_empty() {
                                     list.push(parts[i].to_string());
@@ -102,6 +105,39 @@ fn main() {
 
                             let response = format!(":{}\r\n", list.len());
                             stream.write_all(response.as_bytes()).unwrap();
+
+                        // LRANGE (positive indexes)
+                        } else if parts.len() >= 9 && parts[2].eq_ignore_ascii_case("LRANGE") {
+                            let key = parts[4];
+                            let start = parts[6].parse::<usize>().unwrap();
+                            let stop = parts[8].parse::<usize>().unwrap();
+
+                            let db = lists.lock().unwrap();
+
+                            if let Some(list) = db.get(key) {
+                                let elements: Vec<&String> = if start <= stop {
+                                    list.iter()
+                                        .skip(start)
+                                        .take(stop - start + 1)
+                                        .collect()
+                                } else {
+                                    Vec::new()
+                                };
+
+                                let mut response = format!("*{}\r\n", elements.len());
+
+                                for element in elements {
+                                    response.push_str(&format!(
+                                        "${}\r\n{}\r\n",
+                                        element.len(),
+                                        element
+                                    ));
+                                }
+
+                                stream.write_all(response.as_bytes()).unwrap();
+                            } else {
+                                stream.write_all(b"*0\r\n").unwrap();
+                            }
                         }
                     }
                 });
