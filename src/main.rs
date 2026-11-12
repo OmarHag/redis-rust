@@ -31,11 +31,11 @@ fn main() {
                     let mut buf = [0; 512];
 
                     loop {
-                        let bytes_read = stream.read(&mut buf).unwrap();
-
-                        if bytes_read == 0 {
-                            break;
-                        }
+                        let bytes_read = match stream.read(&mut buf) {
+                            Ok(0) => break,
+                            Ok(n) => n,
+                            Err(_) => break,
+                        };
 
                         let message = String::from_utf8_lossy(&buf[..bytes_read]);
                         let parts: Vec<&str> = message.split("\r\n").collect();
@@ -106,24 +106,32 @@ fn main() {
                             let response = format!(":{}\r\n", list.len());
                             stream.write_all(response.as_bytes()).unwrap();
 
-                        // LRANGE (positive indexes)
+                        // LRANGE (positive and negative indexes)
                         } else if parts.len() >= 9 && parts[2].eq_ignore_ascii_case("LRANGE") {
                             let key = parts[4];
-                            let start = parts[6].parse::<usize>().unwrap();
-                            let stop = parts[8].parse::<usize>().unwrap();
+                            let start = parts[6].parse::<i64>().unwrap();
+                            let stop = parts[8].parse::<i64>().unwrap();
 
                             let db = lists.lock().unwrap();
 
                             if let Some(list) = db.get(key) {
+                                let len = list.len() as i64;
+
+                                // Convert negative indexes to positive positions
+                                let start = if start < 0 { len + start } else { start };
+                                let stop = if stop < 0 { len + stop } else { stop };
+
+                                // Keep indexes inside valid boundaries
+                                let start = start.max(0).min(len);
+                                let stop = stop.min(len - 1);
+
                                 let elements: Vec<&String> = if start <= stop {
-                                    list.iter()
-                                        .skip(start)
-                                        .take(stop - start + 1)
-                                        .collect()
+                                    list[start as usize..=stop as usize].iter().collect()
                                 } else {
                                     Vec::new()
                                 };
 
+                                // RESP array response
                                 let mut response = format!("*{}\r\n", elements.len());
 
                                 for element in elements {
@@ -142,6 +150,7 @@ fn main() {
                     }
                 });
             }
+
             Err(e) => {
                 println!("Error: {}", e);
             }
